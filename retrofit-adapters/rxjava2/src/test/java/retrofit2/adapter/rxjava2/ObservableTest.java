@@ -16,7 +16,6 @@
 package retrofit2.adapter.rxjava2;
 
 import io.reactivex.Observable;
-import io.reactivex.functions.Function;
 import io.reactivex.plugins.RxJavaPlugins;
 import java.io.IOException;
 import okhttp3.mockwebserver.MockResponse;
@@ -139,14 +138,25 @@ public final class ObservableTest {
   @Test public void observableAssembly() {
     try {
       final Observable<String> justMe = Observable.just("me");
-      RxJavaPlugins.setOnObservableAssembly(new Function<Observable, Observable>() {
-        @Override public Observable apply(Observable f) {
-          return justMe;
-        }
-      });
+      RxJavaPlugins.setOnObservableAssembly(f -> justMe);
       assertThat(service.body()).isEqualTo(justMe);
     } finally {
       RxJavaPlugins.reset();
     }
+  }
+
+  @Test public void subscribeTwice() {
+    server.enqueue(new MockResponse().setBody("Hi"));
+    server.enqueue(new MockResponse().setBody("Hey"));
+
+    Observable<String> observable = service.body();
+
+    RecordingObserver<String> observer1 = observerRule.create();
+    observable.subscribe(observer1);
+    observer1.assertValue("Hi").assertComplete();
+
+    RecordingObserver<String> observer2 = observerRule.create();
+    observable.subscribe(observer2);
+    observer2.assertValue("Hey").assertComplete();
   }
 }

@@ -132,13 +132,15 @@ public final class Calls {
       if (response != null) {
         return response.raw().request();
       }
-      return new Request.Builder().url("http://localhost").build();
+      return new Request.Builder()
+          .url("http://localhost")
+          .build();
     }
   }
 
   static final class DeferredCall<T> implements Call<T> {
     private final Callable<Call<T>> callable;
-    private Call<T> delegate;
+    private @Nullable Call<T> delegate;
 
     DeferredCall(Callable<Call<T>> callable) {
       this.callable = callable;

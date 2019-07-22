@@ -18,8 +18,10 @@ package retrofit2;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.lang.reflect.Proxy;
 import java.lang.reflect.Type;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -133,9 +135,10 @@ public final class Retrofit {
     return (T) Proxy.newProxyInstance(service.getClassLoader(), new Class<?>[] { service },
         new InvocationHandler() {
           private final Platform platform = Platform.get();
+          private final Object[] emptyArgs = new Object[0];
 
-          @Override public Object invoke(Object proxy, Method method, @Nullable Object[] args)
-              throws Throwable {
+          @Override public @Nullable Object invoke(Object proxy, Method method,
+              @Nullable Object[] args) throws Throwable {
             // If the method is a method from Object then defer to normal invocation.
             if (method.getDeclaringClass() == Object.class) {
               return method.invoke(this, args);
@@ -143,7 +146,7 @@ public final class Retrofit {
             if (platform.isDefaultMethod(method)) {
               return platform.invokeDefaultMethod(method, service, proxy, args);
             }
-            return loadServiceMethod(method).invoke(args);
+            return loadServiceMethod(method).invoke(args != null ? args : emptyArgs);
           }
         });
   }
@@ -151,7 +154,7 @@ public final class Retrofit {
   private void eagerlyValidateMethods(Class<?> service) {
     Platform platform = Platform.get();
     for (Method method : service.getDeclaredMethods()) {
-      if (!platform.isDefaultMethod(method)) {
+      if (!platform.isDefaultMethod(method) && !Modifier.isStatic(method.getModifiers())) {
         loadServiceMethod(method);
       }
     }
@@ -391,7 +394,7 @@ public final class Retrofit {
   public static final class Builder {
     private final Platform platform;
     private @Nullable okhttp3.Call.Factory callFactory;
-    private HttpUrl baseUrl;
+    private @Nullable HttpUrl baseUrl;
     private final List<Converter.Factory> converterFactories = new ArrayList<>();
     private final List<CallAdapter.Factory> callAdapterFactories = new ArrayList<>();
     private @Nullable Executor callbackExecutor;
@@ -410,13 +413,19 @@ public final class Retrofit {
       callFactory = retrofit.callFactory;
       baseUrl = retrofit.baseUrl;
 
-      converterFactories.addAll(retrofit.converterFactories);
-      // Remove the default BuiltInConverters instance added by build().
-      converterFactories.remove(0);
+      // Do not add the default BuiltIntConverters and platform-aware converters added by build().
+      for (int i = 1,
+          size = retrofit.converterFactories.size() - platform.defaultConverterFactoriesSize();
+          i < size; i++) {
+        converterFactories.add(retrofit.converterFactories.get(i));
+      }
 
-      callAdapterFactories.addAll(retrofit.callAdapterFactories);
-      // Remove the default, platform-aware call adapter added by build().
-      callAdapterFactories.remove(callAdapterFactories.size() - 1);
+      // Do not add the default, platform-aware call adapters added by build().
+      for (int i = 0,
+          size = retrofit.callAdapterFactories.size() - platform.defaultCallAdapterFactoriesSize();
+          i < size; i++) {
+        callAdapterFactories.add(retrofit.callAdapterFactories.get(i));
+      }
 
       callbackExecutor = retrofit.callbackExecutor;
       validateEagerly = retrofit.validateEagerly;
@@ -439,6 +448,16 @@ public final class Retrofit {
     public Builder callFactory(okhttp3.Call.Factory factory) {
       this.callFactory = checkNotNull(factory, "factory == null");
       return this;
+    }
+
+    /**
+     * Set the API base URL.
+     *
+     * @see #baseUrl(HttpUrl)
+     */
+    public Builder baseUrl(URL baseUrl) {
+      checkNotNull(baseUrl, "baseUrl == null");
+      return baseUrl(HttpUrl.get(baseUrl.toString()));
     }
 
     /**
@@ -580,16 +599,17 @@ public final class Retrofit {
 
       // Make a defensive copy of the adapters and add the default Call adapter.
       List<CallAdapter.Factory> callAdapterFactories = new ArrayList<>(this.callAdapterFactories);
-      callAdapterFactories.add(platform.defaultCallAdapterFactory(callbackExecutor));
+      callAdapterFactories.addAll(platform.defaultCallAdapterFactories(callbackExecutor));
 
       // Make a defensive copy of the converters.
-      List<Converter.Factory> converterFactories =
-          new ArrayList<>(1 + this.converterFactories.size());
+      List<Converter.Factory> converterFactories = new ArrayList<>(
+          1 + this.converterFactories.size() + platform.defaultConverterFactoriesSize());
 
       // Add the built-in converter factory first. This prevents overriding its behavior but also
       // ensures correct behavior when using converters that consume all types.
       converterFactories.add(new BuiltInConverters());
       converterFactories.addAll(this.converterFactories);
+      converterFactories.addAll(platform.defaultConverterFactories());
 
       return new Retrofit(callFactory, baseUrl, unmodifiableList(converterFactories),
           unmodifiableList(callAdapterFactories), callbackExecutor, validateEagerly);

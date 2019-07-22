@@ -31,7 +31,7 @@ import static retrofit2.Utils.throwIfFatal;
 
 final class OkHttpCall<T> implements Call<T> {
   private final RequestFactory requestFactory;
-  private final @Nullable Object[] args;
+  private final Object[] args;
   private final okhttp3.Call.Factory callFactory;
   private final Converter<ResponseBody, T> responseConverter;
 
@@ -44,7 +44,7 @@ final class OkHttpCall<T> implements Call<T> {
   @GuardedBy("this")
   private boolean executed;
 
-  OkHttpCall(RequestFactory requestFactory, @Nullable Object[] args,
+  OkHttpCall(RequestFactory requestFactory, Object[] args,
       okhttp3.Call.Factory callFactory, Converter<ResponseBody, T> responseConverter) {
     this.requestFactory = requestFactory;
     this.args = args;
@@ -128,7 +128,8 @@ final class OkHttpCall<T> implements Call<T> {
         try {
           callback.onResponse(OkHttpCall.this, response);
         } catch (Throwable t) {
-          t.printStackTrace();
+          throwIfFatal(t);
+          t.printStackTrace(); // TODO this is not great
         }
       }
 
@@ -140,7 +141,8 @@ final class OkHttpCall<T> implements Call<T> {
         try {
           callback.onFailure(OkHttpCall.this, e);
         } catch (Throwable t) {
-          t.printStackTrace();
+          throwIfFatal(t);
+          t.printStackTrace(); // TODO this is not great
         }
       }
     });
@@ -252,10 +254,10 @@ final class OkHttpCall<T> implements Call<T> {
   }
 
   static final class NoContentResponseBody extends ResponseBody {
-    private final MediaType contentType;
+    private final @Nullable MediaType contentType;
     private final long contentLength;
 
-    NoContentResponseBody(MediaType contentType, long contentLength) {
+    NoContentResponseBody(@Nullable MediaType contentType, long contentLength) {
       this.contentType = contentType;
       this.contentLength = contentLength;
     }
@@ -275,10 +277,21 @@ final class OkHttpCall<T> implements Call<T> {
 
   static final class ExceptionCatchingResponseBody extends ResponseBody {
     private final ResponseBody delegate;
-    IOException thrownException;
+    private final BufferedSource delegateSource;
+    @Nullable IOException thrownException;
 
     ExceptionCatchingResponseBody(ResponseBody delegate) {
       this.delegate = delegate;
+      this.delegateSource = Okio.buffer(new ForwardingSource(delegate.source()) {
+        @Override public long read(Buffer sink, long byteCount) throws IOException {
+          try {
+            return super.read(sink, byteCount);
+          } catch (IOException e) {
+            thrownException = e;
+            throw e;
+          }
+        }
+      });
     }
 
     @Override public MediaType contentType() {
@@ -290,16 +303,7 @@ final class OkHttpCall<T> implements Call<T> {
     }
 
     @Override public BufferedSource source() {
-      return Okio.buffer(new ForwardingSource(delegate.source()) {
-        @Override public long read(Buffer sink, long byteCount) throws IOException {
-          try {
-            return super.read(sink, byteCount);
-          } catch (IOException e) {
-            thrownException = e;
-            throw e;
-          }
-        }
-      });
+      return delegateSource;
     }
 
     @Override public void close() {

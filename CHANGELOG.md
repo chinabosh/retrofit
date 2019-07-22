@@ -1,6 +1,79 @@
 Change Log
 ==========
 
+Version 2.6.0 *(2019-06-05)*
+----------------------------
+
+ * New: Support `suspend` modifier on functions for Kotlin! This allows you to express the asynchrony of HTTP requests
+   in an idiomatic fashion for the language.
+
+   ```kotlin
+   @GET("users/{id}")
+   suspend fun user(@Path("id") id: Long): User
+   ```
+
+   Behind the scenes this behaves as if defined as `fun user(...): Call<User>` and then invoked with `Call.enqueue`.
+   You can also return `Response<User>` for access to the response metadata.
+
+   Currently this integration only supports non-null response body types. Follow
+   [issue 3075](https://github.com/square/retrofit/issues/3075) for nullable type support.
+
+ * New: **`@Tag`** parameter annotation for setting tags on the underlying OkHttp `Request` object. These can be read
+   in `CallAdapter`s or OkHttp `Interceptor`s for tracing, analytics, varying behavior, and more.
+
+ * New: **`@SkipCallbackExecutor`** method annotation will result in your `Call` invoking its `Callback` on the
+   background thread on which the HTTP call was made.
+
+ * New: Support OkHttp's `Headers` type for `@HeaderMap` parameters.
+
+ * New: Add `Retrofit.Builder.baseUrl(URL)` overload.
+
+ * Fix: Add embedded R8/ProGuard rule which retains Retrofit interfaces (while still allowing obfuscation). This
+   is needed because R8 running in 'full mode' (i.e., not in ProGuard-compatibility mode) will see that there are
+   no subtypes of these interfaces and rewrite any code which references instances to null.
+ * Fix: Mark `HttpException.response()` as `@Nullable` as serializing the exception does not retain this instance.
+ * Fix: Fatal errors (such as stack overflows, out of memory, etc.) now propagate to the OkHttp `Dispatcher` thread
+   on which they are running.
+ * Fix: Ensure JAX-B converter closes the response body when an exception is thrown during deserialization.
+ * Fix: Ignore static methods when performing eager validation of interface methods.
+ * Fix: Ensure that calling `source()` twice on the `ResponseBody` passed to a `Converter` always returns the same
+   instance. Prior to the fix, intermediate buffering would cause response data to be lost.
+
+
+Version 2.5.0 *(2018-11-18)*
+----------------------------
+
+ * New: Built-in support for Kotlin's `Unit` type. This behaves the same as Java's `Void` where the body
+   content is ignored and immediately discarded.
+ * New: Built-in support for Java 8's `Optional` and `CompletableFuture` types. Previously the 'converter-java8'
+   and 'adapter-java8' dependencies were needed and explicitly adding `Java8OptionalConverterFactory` and/or
+   `Java8CallAdapterFactory` to your `Retrofit.Builder` in order to use these types. Support is now built-in and
+   those types and their artifacts are marked as deprecated.
+ * New: `Invocation` class provides a reference to the invoked method and argument list as a tag on the
+   underlying OkHttp `Call`. This can be accessed from an OkHttp interceptor for things like logging, analytics,
+   or metrics aggregation.
+ * New: Kotlin extension for `Retrofit` which allows you call `create` passing the interface type only as
+   a generic parameter (e.g., `retrofit.create<MyService>()`).
+ * New: Added `Response.success` overload which allows specifying a custom 2xx status code.
+ * New: Added `Calls.failure` overload which allows passing any `Throwable` subtype.
+ * New: Minimal R8 rules now ship inside the jar requiring no client configuration in the common case.
+ * Fix: Do not propagate fatal errors to the callback. They are sent to the thread's uncaught
+   exception handler.
+ * Fix: Do not enqueue/execute an otherwise useless call when the RxJava type is disposed by `onSubscribe`.
+ * Fix: Call `RxJavaPlugins` assembly hook when creating an RxJava 2 type.
+ * Fix: Ensure both the Guava and Java 8 `Optional` converters delegate properly. This ensures that converters
+   registered prior to the optional converter can be used for deserializing the body type.
+ * Fix: Prevent `@Path` values from participating in path-traversal. This ensures untrusted input passed as
+   a path value cannot cause you to make a request to an un-intended relative URL.
+ * Fix: Simple XML converter (which is deprecated) no longer wraps subtypes of `RuntimeException`
+   or `IOException` when it fails.
+ * Fix: Prevent JAXB converter from loading remote entities and DTDs.
+ * Fix: Correctly detect default methods in interfaces on Android (API 24+). These still do not work, but
+   now a correct exception will be thrown when detected.
+ * Fix: Report more accurate exceptions when a `@QueryName` or `@QueryMap` precedes a `@Url` parameter.
+ * Update OkHttp dependency to 3.12.
+
+
 Version 2.4.0 *(2018-03-14)*
 ----------------------------
 

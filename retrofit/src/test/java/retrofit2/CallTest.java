@@ -22,7 +22,6 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
-import okhttp3.Interceptor;
 import okhttp3.OkHttpClient;
 import okhttp3.RequestBody;
 import okhttp3.ResponseBody;
@@ -47,8 +46,7 @@ import static okhttp3.mockwebserver.SocketPolicy.DISCONNECT_DURING_RESPONSE_BODY
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
-import static org.mockito.Mockito.spy;
-import static org.mockito.Mockito.verifyNoMoreInteractions;
+import static retrofit2.TestingUtils.repeat;
 
 public final class CallTest {
   @Rule public final MockWebServer server = new MockWebServer();
@@ -196,13 +194,11 @@ public final class CallTest {
         .baseUrl(server.url("/"))
         .addConverterFactory(new ToStringConverterFactory() {
           @Override
-          public Converter<?, RequestBody> requestBodyConverter(Type type,
+          public Converter<String, RequestBody> requestBodyConverter(Type type,
               Annotation[] parameterAnnotations, Annotation[] methodAnnotations,
               Retrofit retrofit) {
-            return new Converter<String, RequestBody>() {
-              @Override public RequestBody convert(String value) throws IOException {
-                throw new UnsupportedOperationException("I am broken!");
-              }
+            return value -> {
+              throw new UnsupportedOperationException("I am broken!");
             };
           }
         })
@@ -223,13 +219,11 @@ public final class CallTest {
         .baseUrl(server.url("/"))
         .addConverterFactory(new ToStringConverterFactory() {
           @Override
-          public Converter<?, RequestBody> requestBodyConverter(Type type,
+          public Converter<String, RequestBody> requestBodyConverter(Type type,
               Annotation[] parameterAnnotations, Annotation[] methodAnnotations,
               Retrofit retrofit) {
-            return new Converter<String, RequestBody>() {
-              @Override public RequestBody convert(String value) throws IOException {
-                throw new UnsupportedOperationException("I am broken!");
-              }
+            return value -> {
+              throw new UnsupportedOperationException("I am broken!");
             };
           }
         })
@@ -259,12 +253,10 @@ public final class CallTest {
         .baseUrl(server.url("/"))
         .addConverterFactory(new ToStringConverterFactory() {
           @Override
-          public Converter<ResponseBody, ?> responseBodyConverter(Type type,
+          public Converter<ResponseBody, String> responseBodyConverter(Type type,
               Annotation[] annotations, Retrofit retrofit) {
-            return new Converter<ResponseBody, String>() {
-              @Override public String convert(ResponseBody value) throws IOException {
-                throw new UnsupportedOperationException("I am broken!");
-              }
+            return value -> {
+              throw new UnsupportedOperationException("I am broken!");
             };
           }
         })
@@ -285,18 +277,16 @@ public final class CallTest {
   @Test public void conversionProblemIncomingMaskedByConverterIsUnwrapped() throws IOException {
     // MWS has no way to trigger IOExceptions during the response body so use an interceptor.
     OkHttpClient client = new OkHttpClient.Builder() //
-        .addInterceptor(new Interceptor() {
-          @Override public okhttp3.Response intercept(Chain chain) throws IOException {
-            okhttp3.Response response = chain.proceed(chain.request());
-            ResponseBody body = response.body();
-            BufferedSource source = Okio.buffer(new ForwardingSource(body.source()) {
-              @Override public long read(Buffer sink, long byteCount) throws IOException {
-                throw new IOException("cause");
-              }
-            });
-            body = ResponseBody.create(body.contentType(), body.contentLength(), source);
-            return response.newBuilder().body(body).build();
-          }
+        .addInterceptor(chain -> {
+          okhttp3.Response response = chain.proceed(chain.request());
+          ResponseBody body = response.body();
+          BufferedSource source = Okio.buffer(new ForwardingSource(body.source()) {
+            @Override public long read(Buffer sink, long byteCount) throws IOException {
+              throw new IOException("cause");
+            }
+          });
+          body = ResponseBody.create(body.contentType(), body.contentLength(), source);
+          return response.newBuilder().body(body).build();
         }).build();
 
     Retrofit retrofit = new Retrofit.Builder()
@@ -304,16 +294,14 @@ public final class CallTest {
         .client(client)
         .addConverterFactory(new ToStringConverterFactory() {
           @Override
-          public Converter<ResponseBody, ?> responseBodyConverter(Type type,
+          public Converter<ResponseBody, String> responseBodyConverter(Type type,
               Annotation[] annotations, Retrofit retrofit) {
-            return new Converter<ResponseBody, String>() {
-              @Override public String convert(ResponseBody value) throws IOException {
-                try {
-                  return value.string();
-                } catch (IOException e) {
-                  // Some serialization libraries mask transport problems in runtime exceptions. Bad!
-                  throw new RuntimeException("wrapper", e);
-                }
+            return value -> {
+              try {
+                return value.string();
+              } catch (IOException e) {
+                // Some serialization libraries mask transport problems in runtime exceptions. Bad!
+                throw new RuntimeException("wrapper", e);
               }
             };
           }
@@ -337,12 +325,10 @@ public final class CallTest {
         .baseUrl(server.url("/"))
         .addConverterFactory(new ToStringConverterFactory() {
           @Override
-          public Converter<ResponseBody, ?> responseBodyConverter(Type type,
+          public Converter<ResponseBody, String> responseBodyConverter(Type type,
               Annotation[] annotations, Retrofit retrofit) {
-            return new Converter<ResponseBody, String>() {
-              @Override public String convert(ResponseBody value) throws IOException {
-                throw new UnsupportedOperationException("I am broken!");
-              }
+            return value -> {
+              throw new UnsupportedOperationException("I am broken!");
             };
           }
         })
@@ -370,16 +356,14 @@ public final class CallTest {
   }
 
   @Test public void http204SkipsConverter() throws IOException {
-    final Converter<ResponseBody, String> converter = spy(new Converter<ResponseBody, String>() {
-      @Override public String convert(ResponseBody value) throws IOException {
-        return value.string();
-      }
-    });
+    final Converter<ResponseBody, String> converter = value -> {
+      throw new AssertionError();
+    };
     Retrofit retrofit = new Retrofit.Builder()
         .baseUrl(server.url("/"))
         .addConverterFactory(new ToStringConverterFactory() {
           @Override
-          public Converter<ResponseBody, ?> responseBodyConverter(Type type,
+          public Converter<ResponseBody, String> responseBodyConverter(Type type,
               Annotation[] annotations, Retrofit retrofit) {
             return converter;
           }
@@ -392,20 +376,17 @@ public final class CallTest {
     Response<String> response = example.getString().execute();
     assertThat(response.code()).isEqualTo(204);
     assertThat(response.body()).isNull();
-    verifyNoMoreInteractions(converter);
   }
 
   @Test public void http205SkipsConverter() throws IOException {
-    final Converter<ResponseBody, String> converter = spy(new Converter<ResponseBody, String>() {
-      @Override public String convert(ResponseBody value) throws IOException {
-        return value.string();
-      }
-    });
+    final Converter<ResponseBody, String> converter = value -> {
+      throw new AssertionError();
+    };
     Retrofit retrofit = new Retrofit.Builder()
         .baseUrl(server.url("/"))
         .addConverterFactory(new ToStringConverterFactory() {
           @Override
-          public Converter<ResponseBody, ?> responseBodyConverter(Type type,
+          public Converter<ResponseBody, String> responseBodyConverter(Type type,
               Annotation[] annotations, Retrofit retrofit) {
             return converter;
           }
@@ -418,7 +399,29 @@ public final class CallTest {
     Response<String> response = example.getString().execute();
     assertThat(response.code()).isEqualTo(205);
     assertThat(response.body()).isNull();
-    verifyNoMoreInteractions(converter);
+  }
+
+  @Test public void converterBodyDoesNotLeakContentInIntermediateBuffers() throws IOException {
+    Retrofit retrofit = new Retrofit.Builder()
+        .baseUrl(server.url("/"))
+        .addConverterFactory(new Converter.Factory() {
+          @Override public Converter<ResponseBody, String> responseBodyConverter(Type type,
+              Annotation[] annotations, Retrofit retrofit) {
+            return value -> {
+              String prefix = value.source().readUtf8(2);
+              value.source().skip(20_000 - 4);
+              String suffix = value.source().readUtf8();
+              return prefix + suffix;
+            };
+          }
+        })
+        .build();
+    Service example = retrofit.create(Service.class);
+
+    server.enqueue(new MockResponse().setBody(repeat('a', 10_000) + repeat('b', 10_000)));
+
+    Response<String> response = example.getString().execute();
+    assertThat(response.body()).isEqualTo("aabb");
   }
 
   @Test public void executeCallOnce() throws IOException {

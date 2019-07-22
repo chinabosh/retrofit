@@ -57,8 +57,11 @@ import retrofit2.http.Path;
 import retrofit2.http.Query;
 import retrofit2.http.QueryMap;
 import retrofit2.http.QueryName;
+import retrofit2.http.Tag;
 import retrofit2.http.Url;
 
+import static java.util.Arrays.asList;
+import static java.util.Collections.emptyList;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.fail;
@@ -488,7 +491,8 @@ public final class RequestFactoryTest {
       buildRequest(Example.class, new Object[] { null });
       fail();
     } catch (IllegalArgumentException e) {
-      assertThat(e).hasMessage("Query map was null.");
+      assertThat(e).hasMessage("Query map was null (parameter #1)\n" +
+              "    for method Example.method");
     }
   }
 
@@ -508,7 +512,8 @@ public final class RequestFactoryTest {
       buildRequest(Example.class, queryParams);
       fail();
     } catch (IllegalArgumentException e) {
-      assertThat(e).hasMessage("Query map contained null key.");
+      assertThat(e).hasMessage("Query map contained null key. (parameter #1)\n" +
+              "    for method Example.method");
     }
   }
 
@@ -528,7 +533,8 @@ public final class RequestFactoryTest {
       buildRequest(Example.class, queryParams);
       fail();
     } catch (IllegalArgumentException e) {
-      assertThat(e).hasMessage("Query map contained null value for key 'kit'.");
+      assertThat(e).hasMessage("Query map contained null value for key 'kit'. (parameter #1)\n" +
+              "    for method Example.method");
     }
   }
 
@@ -601,7 +607,8 @@ public final class RequestFactoryTest {
       buildRequest(Example.class, (Map<String, String>) null);
       fail();
     } catch (IllegalArgumentException e) {
-      assertThat(e).hasMessage("Header map was null.");
+      assertThat(e).hasMessage("Header map was null. (parameter #1)\n" +
+              "    for method Example.method");
     }
   }
 
@@ -621,7 +628,8 @@ public final class RequestFactoryTest {
       buildRequest(Example.class, headers);
       fail();
     } catch (IllegalArgumentException e) {
-      assertThat(e).hasMessage("Header map contained null key.");
+      assertThat(e).hasMessage("Header map contained null key. (parameter #1)\n" +
+              "    for method Example.method");
     }
   }
 
@@ -641,7 +649,72 @@ public final class RequestFactoryTest {
       buildRequest(Example.class, headers);
       fail();
     } catch (IllegalArgumentException e) {
-      assertThat(e).hasMessage("Header map contained null value for key 'Accept-Charset'.");
+      assertThat(e).hasMessage("Header map contained null value for key 'Accept-Charset'. (parameter #1)\n" +
+              "    for method Example.method");
+    }
+  }
+
+  @Test public void getWithHeaders() {
+    class Example {
+      @GET("/search")
+      Call<ResponseBody> method(@HeaderMap okhttp3.Headers headers) {
+        throw new AssertionError();
+      }
+    }
+
+    okhttp3.Headers headers = new okhttp3.Headers.Builder()
+        .add("Accept", "text/plain")
+        .add("Accept", "application/json")
+        .add("Accept-Charset", "utf-8")
+        .build();
+
+    Request request = buildRequest(Example.class, headers);
+    assertThat(request.method()).isEqualTo("GET");
+    assertThat(request.url().toString()).isEqualTo("http://example.com/search");
+    assertThat(request.body()).isNull();
+    assertThat(request.headers().size()).isEqualTo(3);
+    assertThat(request.headers("Accept")).isEqualTo(asList("text/plain", "application/json"));
+    assertThat(request.header("Accept-Charset")).isEqualTo("utf-8");
+  }
+
+  @Test public void getWithHeadersAndHeaderMap() {
+    class Example {
+      @GET("/search")
+      Call<ResponseBody> method(@HeaderMap okhttp3.Headers headers,
+          @HeaderMap Map<String, Object> headerMap) {
+        throw new AssertionError();
+      }
+    }
+
+    okhttp3.Headers headers = new okhttp3.Headers.Builder()
+        .add("Accept", "text/plain")
+        .add("Accept-Charset", "utf-8")
+        .build();
+    Map<String, String> headerMap = Collections.singletonMap("Accept", "application/json");
+
+    Request request = buildRequest(Example.class, headers, headerMap);
+    assertThat(request.method()).isEqualTo("GET");
+    assertThat(request.url().toString()).isEqualTo("http://example.com/search");
+    assertThat(request.body()).isNull();
+    assertThat(request.headers().size()).isEqualTo(3);
+    assertThat(request.headers("Accept")).isEqualTo(asList("text/plain", "application/json"));
+    assertThat(request.header("Accept-Charset")).isEqualTo("utf-8");
+  }
+
+  @Test public void headersRejectsNull() {
+    class Example {
+      @GET("/")
+      Call<ResponseBody> method(@HeaderMap okhttp3.Headers headers) {
+        throw new AssertionError();
+      }
+    }
+
+    try {
+      buildRequest(Example.class, (okhttp3.Headers) null);
+      fail();
+    } catch (IllegalArgumentException e) {
+      assertThat(e).hasMessage("Headers parameter must not be null. (parameter #1)\n" +
+          "    for method Example.method");
     }
   }
 
@@ -878,6 +951,88 @@ public final class RequestFactoryTest {
     assertThat(request.body()).isNull();
   }
 
+  @Test public void pathParametersAndPathTraversal() {
+    class Example {
+      @GET("/foo/bar/{ping}/") //
+      Call<ResponseBody> method(@Path(value = "ping") String ping) {
+        return null;
+      }
+    }
+
+    assertMalformedRequest(Example.class, ".");
+    assertMalformedRequest(Example.class, "..");
+
+    assertThat(buildRequest(Example.class, "./a").url().encodedPath())
+        .isEqualTo("/foo/bar/.%2Fa/");
+    assertThat(buildRequest(Example.class, "a/.").url().encodedPath())
+        .isEqualTo("/foo/bar/a%2F./");
+    assertThat(buildRequest(Example.class, "a/..").url().encodedPath())
+        .isEqualTo("/foo/bar/a%2F../");
+    assertThat(buildRequest(Example.class, "../a").url().encodedPath())
+        .isEqualTo("/foo/bar/..%2Fa/");
+    assertThat(buildRequest(Example.class, "..\\..").url().encodedPath())
+        .isEqualTo("/foo/bar/..%5C../");
+
+    assertThat(buildRequest(Example.class, "%2E").url().encodedPath())
+        .isEqualTo("/foo/bar/%252E/");
+    assertThat(buildRequest(Example.class, "%2E%2E").url().encodedPath())
+        .isEqualTo("/foo/bar/%252E%252E/");
+  }
+
+  @Test public void encodedPathParametersAndPathTraversal() {
+    class Example {
+      @GET("/foo/bar/{ping}/") //
+      Call<ResponseBody> method(@Path(value = "ping", encoded = true) String ping) {
+        return null;
+      }
+    }
+
+    assertMalformedRequest(Example.class, ".");
+    assertMalformedRequest(Example.class, "%2E");
+    assertMalformedRequest(Example.class, "%2e");
+    assertMalformedRequest(Example.class, "..");
+    assertMalformedRequest(Example.class, "%2E.");
+    assertMalformedRequest(Example.class, "%2e.");
+    assertMalformedRequest(Example.class, ".%2E");
+    assertMalformedRequest(Example.class, ".%2e");
+    assertMalformedRequest(Example.class, "%2E%2e");
+    assertMalformedRequest(Example.class, "%2e%2E");
+    assertMalformedRequest(Example.class, "./a");
+    assertMalformedRequest(Example.class, "a/.");
+    assertMalformedRequest(Example.class, "../a");
+    assertMalformedRequest(Example.class, "a/..");
+    assertMalformedRequest(Example.class, "a/../b");
+    assertMalformedRequest(Example.class, "a/%2e%2E/b");
+
+    assertThat(buildRequest(Example.class, "...").url().encodedPath())
+        .isEqualTo("/foo/bar/.../");
+    assertThat(buildRequest(Example.class, "a..b").url().encodedPath())
+        .isEqualTo("/foo/bar/a..b/");
+    assertThat(buildRequest(Example.class, "a..").url().encodedPath())
+        .isEqualTo("/foo/bar/a../");
+    assertThat(buildRequest(Example.class, "a..b").url().encodedPath())
+        .isEqualTo("/foo/bar/a..b/");
+    assertThat(buildRequest(Example.class, "..b").url().encodedPath())
+        .isEqualTo("/foo/bar/..b/");
+    assertThat(buildRequest(Example.class, "..\\..").url().encodedPath())
+        .isEqualTo("/foo/bar/..%5C../");
+  }
+
+  @Test public void dotDotsOkayWhenNotFullPathSegment() {
+    class Example {
+      @GET("/foo{ping}bar/") //
+      Call<ResponseBody> method(@Path(value = "ping", encoded = true) String ping) {
+        return null;
+      }
+    }
+
+    assertMalformedRequest(Example.class, "/./");
+    assertMalformedRequest(Example.class, "/../");
+
+    assertThat(buildRequest(Example.class, ".").url().encodedPath()).isEqualTo("/foo.bar/");
+    assertThat(buildRequest(Example.class, "..").url().encodedPath()).isEqualTo("/foo..bar/");
+  }
+
   @Test public void pathParamRequired() {
     class Example {
       @GET("/foo/bar/{ping}/") //
@@ -889,7 +1044,8 @@ public final class RequestFactoryTest {
       buildRequest(Example.class, new Object[] { null });
       fail();
     } catch (IllegalArgumentException e) {
-      assertThat(e.getMessage()).isEqualTo("Path parameter \"ping\" value must not be null.");
+      assertThat(e.getMessage()).isEqualTo("Path parameter \"ping\" value must not be null. (parameter #1)\n" +
+              "    for method Example.method");
     }
   }
 
@@ -1374,8 +1530,9 @@ public final class RequestFactoryTest {
     try {
       buildRequest(Example.class, (HttpUrl) null);
       fail();
-    } catch (NullPointerException expected) {
-      assertThat(expected).hasMessage("@Url parameter is null.");
+    } catch (IllegalArgumentException expected) {
+      assertThat(expected).hasMessage("@Url parameter is null. (parameter #1)\n" +
+              "    for method Example.method");
     }
   }
 
@@ -1600,7 +1757,8 @@ public final class RequestFactoryTest {
       buildRequest(Example.class, new Object[] { null });
       fail();
     } catch (IllegalArgumentException e) {
-      assertThat(e.getMessage()).isEqualTo("Body parameter value must not be null.");
+      assertThat(e.getMessage()).isEqualTo("Body parameter value must not be null. (parameter #1)\n" +
+              "    for method Example.method");
     }
   }
 
@@ -1635,6 +1793,8 @@ public final class RequestFactoryTest {
     assertThat(request.url().toString()).isEqualTo("http://example.com/foo/bar/");
 
     RequestBody body = request.body();
+    assertThat(body.contentType().toString()).startsWith("multipart/form-data; boundary=");
+
     Buffer buffer = new Buffer();
     body.writeTo(buffer);
     String bodyString = buffer.readUtf8();
@@ -1794,7 +1954,7 @@ public final class RequestFactoryTest {
 
     MultipartBody.Part part1 = MultipartBody.Part.createFormData("foo", "bar");
     MultipartBody.Part part2 = MultipartBody.Part.createFormData("kit", "kat");
-    Request request = buildRequest(Example.class, Arrays.asList(part1, part2));
+    Request request = buildRequest(Example.class, asList(part1, part2));
     assertThat(request.method()).isEqualTo("POST");
     assertThat(request.headers().size()).isZero();
     assertThat(request.url().toString()).isEqualTo("http://example.com/foo/bar/");
@@ -1884,7 +2044,7 @@ public final class RequestFactoryTest {
       }
     }
 
-    Request request = buildRequest(Example.class, Arrays.asList("pong1", "pong2"));
+    Request request = buildRequest(Example.class, asList("pong1", "pong2"));
     assertThat(request.method()).isEqualTo("POST");
     assertThat(request.headers().size()).isZero();
     assertThat(request.url().toString()).isEqualTo("http://example.com/foo/bar/");
@@ -2098,7 +2258,8 @@ public final class RequestFactoryTest {
       buildRequest(Example.class, new Object[] { null });
       fail();
     } catch (IllegalArgumentException e) {
-      assertThat(e).hasMessage("Part map was null.");
+      assertThat(e).hasMessage("Part map was null. (parameter #1)\n" +
+              "    for method Example.method");
     }
   }
 
@@ -2119,7 +2280,8 @@ public final class RequestFactoryTest {
       buildRequest(Example.class, params);
       fail();
     } catch (IllegalArgumentException e) {
-      assertThat(e).hasMessage("Part map contained null key.");
+      assertThat(e).hasMessage("Part map contained null key. (parameter #1)\n" +
+              "    for method Example.method");
     }
   }
 
@@ -2140,7 +2302,8 @@ public final class RequestFactoryTest {
       buildRequest(Example.class, params);
       fail();
     } catch (IllegalArgumentException e) {
-      assertThat(e).hasMessage("Part map contained null value for key 'kit'.");
+      assertThat(e).hasMessage("Part map contained null value for key 'kit'. (parameter #1)\n" +
+              "    for method Example.method");
     }
   }
 
@@ -2154,7 +2317,7 @@ public final class RequestFactoryTest {
     }
 
     try {
-      buildRequest(Example.class, Collections.emptyList());
+      buildRequest(Example.class, emptyList());
       fail();
     } catch (IllegalArgumentException e) {
       assertThat(e).hasMessage(
@@ -2234,7 +2397,9 @@ public final class RequestFactoryTest {
       }
     }
     Request request = buildRequest(Example.class, "bar", "pong");
-    assertBody(request.body(), "foo=bar&ping=pong");
+    RequestBody body = request.body();
+    assertBody(body, "foo=bar&ping=pong");
+    assertThat(body.contentType().toString()).isEqualTo("application/x-www-form-urlencoded");
   }
 
   @Test public void formEncodedWithEncodedNameFieldParam() {
@@ -2351,7 +2516,8 @@ public final class RequestFactoryTest {
       buildRequest(Example.class, new Object[] { null });
       fail();
     } catch (IllegalArgumentException e) {
-      assertThat(e).hasMessage("Field map was null.");
+      assertThat(e).hasMessage("Field map was null. (parameter #1)\n" +
+              "    for method Example.method");
     }
   }
 
@@ -2372,7 +2538,8 @@ public final class RequestFactoryTest {
       buildRequest(Example.class, fieldMap);
       fail();
     } catch (IllegalArgumentException e) {
-      assertThat(e).hasMessage("Field map contained null key.");
+      assertThat(e).hasMessage("Field map contained null key. (parameter #1)\n" +
+              "    for method Example.method");
     }
   }
 
@@ -2393,7 +2560,8 @@ public final class RequestFactoryTest {
       buildRequest(Example.class, fieldMap);
       fail();
     } catch (IllegalArgumentException e) {
-      assertThat(e).hasMessage("Field map contained null value for key 'foo'.");
+      assertThat(e).hasMessage("Field map contained null value for key 'foo'. (parameter #1)\n" +
+              "    for method Example.method");
     }
   }
 
@@ -2519,7 +2687,7 @@ public final class RequestFactoryTest {
         return null;
       }
     }
-    Request request = buildRequest(Example.class, Arrays.asList("bar", null, "baz"));
+    Request request = buildRequest(Example.class, asList("bar", null, "baz"));
     assertThat(request.method()).isEqualTo("GET");
     okhttp3.Headers headers = request.headers();
     assertThat(headers.size()).isEqualTo(2);
@@ -2554,6 +2722,36 @@ public final class RequestFactoryTest {
     }
     RequestBody body = RequestBody.create(TEXT_PLAIN, "hi");
     Request request = buildRequest(Example.class, body);
+    assertThat(request.body().contentType().toString()).isEqualTo("text/not-plain");
+  }
+
+  @Test public void contentTypeAnnotationHeaderOverridesFormEncoding() {
+    class Example {
+      @FormUrlEncoded //
+      @POST("/foo") //
+      @Headers("Content-Type: text/not-plain") //
+      Call<ResponseBody> method(@Field("foo") String foo, @Field("ping") String ping) {
+        return null;
+      }
+    }
+    Request request = buildRequest(Example.class, "bar", "pong");
+    assertThat(request.body().contentType().toString()).isEqualTo("text/not-plain");
+  }
+
+  @Test public void contentTypeAnnotationHeaderOverridesMultipart() {
+    class Example {
+      @Multipart //
+      @POST("/foo/bar/") //
+      @Headers("Content-Type: text/not-plain") //
+      Call<ResponseBody> method(@Part("ping") String ping, @Part("kit") RequestBody kit) {
+        return null;
+      }
+    }
+
+    Request request = buildRequest(Example.class, "pong", RequestBody.create(
+        TEXT_PLAIN, "kat"));
+
+    RequestBody body = request.body();
     assertThat(request.body().contentType().toString()).isEqualTo("text/not-plain");
   }
 
@@ -2746,6 +2944,63 @@ public final class RequestFactoryTest {
     }
   }
 
+  @Test public void tag() {
+    class Example {
+      @GET("/") Call<ResponseBody> method(@Tag String tag) {
+        return null;
+      }
+    }
+
+    Request request = buildRequest(Example.class, "tagValue");
+    assertThat(request.tag(String.class)).isEqualTo("tagValue");
+  }
+
+  @Test public void tagGeneric() {
+    class Example {
+      @GET("/") Call<ResponseBody> method(@Tag List<String> tag) {
+        return null;
+      }
+    }
+
+    List<String> strings = asList("tag", "value");
+    Request request = buildRequest(Example.class, strings);
+    assertThat(request.tag(List.class)).isSameAs(strings);
+  }
+
+  @Test public void tagDuplicateFails() {
+    class Example {
+      @GET("/") Call<ResponseBody> method(@Tag String one, @Tag String two) {
+        return null;
+      }
+    }
+
+    try {
+      buildRequest(Example.class, "one", "two");
+      fail();
+    } catch (IllegalArgumentException e) {
+      assertThat(e).hasMessage(
+          "@Tag type java.lang.String is duplicate of parameter #1 and would always overwrite its value. (parameter #2)\n"
+              + "    for method Example.method");
+    }
+  }
+
+  @Test public void tagGenericDuplicateFails() {
+    class Example {
+      @GET("/") Call<ResponseBody> method(@Tag List<String> one, @Tag List<Long> two) {
+        return null;
+      }
+    }
+
+    try {
+      buildRequest(Example.class, emptyList(), emptyList());
+      fail();
+    } catch (IllegalArgumentException e) {
+      assertThat(e).hasMessage(
+          "@Tag type java.util.List is duplicate of parameter #1 and would always overwrite its value. (parameter #2)\n"
+              + "    for method Example.method");
+    }
+  }
+
   private static void assertBody(RequestBody body, String expected) {
     assertThat(body).isNotNull();
     Buffer buffer = new Buffer();
@@ -2758,10 +3013,8 @@ public final class RequestFactoryTest {
   }
 
   static <T> Request buildRequest(Class<T> cls, Retrofit.Builder builder, Object... args) {
-    okhttp3.Call.Factory callFactory = new okhttp3.Call.Factory() {
-      @Override public okhttp3.Call newCall(Request request) {
-        throw new UnsupportedOperationException("Not implemented");
-      }
+    okhttp3.Call.Factory callFactory = request -> {
+      throw new UnsupportedOperationException("Not implemented");
     };
 
     Retrofit retrofit = builder.callFactory(callFactory).build();
@@ -2782,5 +3035,13 @@ public final class RequestFactoryTest {
         .addConverterFactory(new ToStringConverterFactory());
 
     return buildRequest(cls, retrofitBuilder, args);
+  }
+
+  static void assertMalformedRequest(Class<?> cls, Object... args) {
+    try {
+      Request request = buildRequest(cls, args);
+      fail("expected a malformed request but was " + request);
+    } catch (IllegalArgumentException expected) {
+    }
   }
 }
